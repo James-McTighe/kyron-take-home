@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from .database import engine, Base, get_db
 from .models import Provider
@@ -62,7 +63,7 @@ def health_check(db: Session = Depends(get_db)):
     """Verifies backend operational status and active connection pooling health."""
     try:
         # Simple evaluation query to confirm active DB socket connection
-        db.execute("SELECT 1")
+        db.execute(text( "SELECT 1" ))
         return {"status": "healthy", "database": "connected and pooled"}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
