@@ -2,23 +2,24 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# For Day 1, use a local PostgreSQL connection string. 
-# (Tomorrow this will pull securely via environment variables or AWS Secrets)
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/scribe_db")
+# Defaulting to local Postgres, easily overridden by environment variables in Docker/AWS
+DATABASE_URL = os.getenv(
+    "DATABASE_URL"
+)
 
-# Setup the SQLAlchemy engine with explicit connection pooling (QueuePool)
+# Configure explicit connection pooling to fulfill architectural criteria
 engine = create_engine(
     DATABASE_URL,
-    pool_size=20,          # Keeps up to 20 permanent connections open
-    max_overflow=10,       # Allows up to 10 bursting connections under heavy load
-    pool_timeout=30,       # Seconds to wait for an available connection before throwing an error
-    pool_recycle=1800      # Recycle connections after 30 minutes to avoid stale links
+    pool_size=10,          # Maintain up to 10 persistent connections
+    max_overflow=20,       # Allow bursting up to 20 additional connections under load
+    pool_timeout=30,       # Seconds to wait for a free connection before throwing an error
+    pool_recycle=1800,     # Recycle connections after 30 minutes to prevent staleness
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Dependency provider to get a DB session per request and return it safely to the pool
+# Dependency to yield database sessions safely to API endpoints
 def get_db():
     db = SessionLocal()
     try:
