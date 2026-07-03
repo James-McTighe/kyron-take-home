@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  # 1. Database Layer (PostgreSQL Container)
+  postgres_db:
+    image: postgres:15-alpine
+    container_name: scribe_db_container
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: local_secure_password
+      POSTGRES_DB: scribe_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Backend Layer (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: scribe_backend_container
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://postgres:local_secure_password@postgres_db:5432/scribe_db
+      - OPENAI_API_KEY=${OPENAI_API_KEY} # Passed from your root local shell/.env file
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+
+  # 3. Frontend Layer (Vite + React)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: scribe_frontend_container
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - CHOKIDAR_USEPOLLING=true # Ensures Vite Hot Module Replacement works smoothly inside Docker
+    depends_on:
+      - backend
+
+  # 4. Reverse Proxy Layer (Nginx - Preparing for your AWS architecture)
+  nginx_proxy:
+    image: nginx:alpine
+    container_name: scribe_nginx_container
+    ports:
+      - "80:80"
+    volumes:
+      - ./infrastructure/nginx/scribe.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+
+volumes:
+  postgres_data:
