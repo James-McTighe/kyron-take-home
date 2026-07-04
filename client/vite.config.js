@@ -8,7 +8,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://backend:8000', // Targets the backend container name
+        target: 'http://server:8000', // Targets the backend container name
         changeOrigin: true,
         secure: false,
       },
