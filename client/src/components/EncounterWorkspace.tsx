@@ -225,7 +225,7 @@ export default function EncounterWorkspace() {
                 </div>
               </section>
 
-              <section className="space-y-4">
+              <section className="space-y-4 mt-4">
                 <div>
                   <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-600">Transcript</h3>
                   <p className="mt-1 text-sm text-slate-500">
@@ -257,7 +257,7 @@ export default function EncounterWorkspace() {
                     const meta = soapSectionMeta[section];
 
                     return (
-                      <div key={section} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div key={section} className="rounded-xl border border-slate-500 bg-slate-50 p-4">
                         <div className="mb-3 flex items-center justify-between">
                           <label className="text-sm font-semibold text-slate-800">{meta.label}</label>
                           <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Editable</span>
