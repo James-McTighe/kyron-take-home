@@ -36,6 +36,12 @@ class EncounterCreate(BaseModel):
     patient: PatientCreate
     transcript: str = Field(..., example="Patient presents with mild cough and fatigue...")
     template_id: Optional[int] = Field(None, example=1)
+    soap_note_json: Optional[Dict] = None
+
+
+class GenerateSOAPRequest(BaseModel):
+    transcript: str = Field(..., min_length=1)
+    template_id: Optional[int] = Field(None, example=1)
 
 class DraftSaveRequest(BaseModel):
     transcript_snapshot: str

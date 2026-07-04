@@ -14,11 +14,10 @@ const NavigationController = () => {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50">
+    <div className="flex min-h-screen flex-col bg-slate-50">
       {/* High-Trust Top Navigation Header */}
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3 shadow-sm z-10">
         <div className="flex items-center space-x-3">
-          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
           <span className="text-sm font-bold text-slate-800 tracking-tight">Scribe Workstation</span>
           <span className="rounded bg-slate-100 px-2 py-0.5 text-2xs font-mono font-bold text-slate-500 uppercase tracking-wide">
             {user?.role}
@@ -37,7 +36,7 @@ const NavigationController = () => {
       </header>
 
       {/* Main Workspace Display Area */}
-      <main className="flex-1 overflow-hidden">
+      <main className="min-h-0 flex-1 overflow-y-auto">
         <EncounterWorkspace />
       </main>
     </div>

@@ -117,7 +117,7 @@ def create_initial_encounter(
             encounter_id=encounter.id,
             version_number=1,
             transcript_snapshot=payload.transcript,
-            soap_note_json={},  # Empty dict for Day 1 since AI hasn't run yet
+            soap_note_json=payload.soap_note_json or {},  # Preserve generated SOAP draft when available
             saved_by_provider_id=fallback_provider.id
         )
         db.add(initial_version)
