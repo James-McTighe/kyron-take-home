@@ -81,21 +81,21 @@ export const EncounterWorkspace: React.FC = () => {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-6 h-screen bg-white">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-6 h-screen bg-slate-200">
       {/* LEFT SIDE PANEL: Input and Clinical Metrics */}
       <div className="flex flex-col space-y-4 overflow-y-auto pr-2">
         <h2 className="text-lg font-bold text-slate-800 border-b pb-2">Encounter Inputs</h2>
         <div className="grid grid-cols-3 gap-2">
-          <input type="text" placeholder="First Name" value={patient.firstName} onChange={e => setPatient({...patient, firstName: e.target.value})} className="border p-2 text-sm rounded"/>
-          <input type="text" placeholder="Last Name" value={patient.lastName} onChange={e => setPatient({...patient, lastName: e.target.value})} className="border p-2 text-sm rounded"/>
-          <input type="date" value={patient.dob} onChange={e => setPatient({...patient, dob: e.target.value})} className="border p-2 text-sm rounded"/>
+          <input type="text" placeholder="First Name" value={patient.firstName} onChange={e => setPatient({...patient, firstName: e.target.value})} className="border bg-white p-2 text-sm rounded focus:outline-none focus:border-blue-500"/>
+          <input type="text" placeholder="Last Name" value={patient.lastName} onChange={e => setPatient({...patient, lastName: e.target.value})} className="border p-2 bg-white text-sm rounded focus:outline-none focus:border-blue-500"/>
+          <input type="date" value={patient.dob} onChange={e => setPatient({...patient, dob: e.target.value})} className="border p-2 text-sm rounded bg-white focus:outline-none focus:border-blue-500"/>
         </div>
         
         <textarea
           value={transcript}
           onChange={(e) => setTranscript(e.target.value)}
           placeholder="Paste medical transcript or raw observational strings here..."
-          className="w-full flex-grow h-64 border p-3 text-sm rounded font-sans focus:ring-1 focus:ring-slate-400 focus:outline-none"
+          className="w-full bg-white h-44 border p-3 text-sm rounded font-sans focus:outline-none focus:border-blue-500"
         />
 
         <button 
@@ -110,12 +110,12 @@ export const EncounterWorkspace: React.FC = () => {
       </div>
 
       {/* RIGHT SIDE PANEL: Live Progressive SOAP Modules */}
-      <div className="flex flex-col space-y-4 bg-slate-50 border border-slate-200 rounded-lg p-5 overflow-y-auto">
+      <div className="flex flex-col space-y-4 border border-slate-200 rounded-lg p-5 overflow-y-auto">
         <h2 className="text-lg font-bold text-slate-800 border-b pb-2">Structured SOAP Record</h2>
         
         {['subjective', 'objective', 'assessment', 'plan'].map((section) => (
-          <div key={section} className="bg-white p-3 rounded border border-slate-200 shadow-sm">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">{section}</h3>
+          <div key={section} className="bg-white p-3 rounded border border-slate-800 shadow-sm">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 mb-1">{section}</h3>
             <textarea
               value={(soapNote as any)[section]}
               onChange={(e) => setSoapNote(prev => ({ ...prev, [section]: e.target.value }))}
