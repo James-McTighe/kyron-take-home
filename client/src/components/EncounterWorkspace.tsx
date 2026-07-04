@@ -85,7 +85,7 @@ export const EncounterWorkspace: React.FC = () => {
       {/* LEFT SIDE PANEL: Input and Clinical Metrics */}
       <div className="flex flex-col space-y-4 overflow-y-auto pr-2">
         <h2 className="text-lg font-bold text-slate-800 border-b pb-2">Encounter Inputs</h2>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-50">
           <input type="text" placeholder="First Name" value={patient.firstName} onChange={e => setPatient({...patient, firstName: e.target.value})} className="border p-2 text-sm rounded"/>
           <input type="text" placeholder="Last Name" value={patient.lastName} onChange={e => setPatient({...patient, lastName: e.target.value})} className="border p-2 text-sm rounded"/>
           <input type="date" value={patient.dob} onChange={e => setPatient({...patient, dob: e.target.value})} className="border p-2 text-sm rounded"/>
