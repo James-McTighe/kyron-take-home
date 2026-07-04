@@ -1,130 +1,143 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useAuth } from '../context/AuthContext';
-import { Icd10SearchWidget } from './Icd10SearchWidget';
+import React, { useState } from 'react';
 
-export const EncounterWorkspace: React.FC = () => {
-  const { token } = useAuth();
-  const [encounterId, setEncounterId] = useState<number | null>(null);
-  const [patient, setPatient] = useState({ firstName: '', lastName: '', dob: '' });
+export default function EncounterWorkspace() {
+  // 1. Manage form state for the patient data and raw transcript
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [dob, setDob] = useState('');
   const [transcript, setTranscript] = useState('');
-  const [soapNote, setSoapNote] = useState({ subjective: '', objective: '', assessment: '', plan: '' });
-  const [isGenerating, setIsGenerating] = useState(false);
+  
+  // UI and tracking states
+  const [isSaving, setIsSaving] = useState(false);
+  const [savedEncounterId, setSavedEncounterId] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
 
-  // Debounced Auto-Save Logic (Runs every 3 seconds if data changes)
-  useEffect(() => {
-    if (!encounterId || !transcript) return;
-    const delayDebounceFn = setTimeout(async () => {
-      await fetch(`/api/encounters/${encounterId}/draft`, {
-        method: 'PUT',
+  // 2. Form submission handler
+  const handleSaveEncounter = async (e) => {
+    e.preventDefault();
+    setIsSaving(true);
+    setErrorMessage('');
+
+    // Quick validation guard before making the network request
+    if (!firstName || !lastName || !dob || !transcript) {
+      setErrorMessage('Please fill out all patient fields and provide a transcript.');
+      setIsSaving(false);
+      return;
+    }
+
+    try {
+      // Pack the payload exactly as your Pydantic EncounterCreate schema expects
+      const payload = {
+        patient: {
+          first_name: firstName,
+          last_name: lastName,
+          dob: dob
+        },
+        transcript: transcript,
+        template_id: null // Fallback to null or add a default configuration selector later
+      };
+
+      // Issue the request using the Vite local development proxy routing path
+      const response = await fetch('/api/encounters', {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ transcript, soap_note: soapNote }),
+        body: JSON.stringify(payload),
       });
-    }, 3000);
 
-    return () => clearTimeout(delayDebounceFn);
-  }, [transcript, soapNote, encounterId, token]);
+      const data = await response.json();
 
-  // Server-Sent Events (SSE) Processing Loop
-  const triggerSoapGeneration = async () => {
-    if (!transcript) return alert("Transcript can't be empty");
-    setIsGenerating(true);
-    setSoapNote({ subjective: '', objective: '', assessment: '', plan: '' });
-
-    // 1. Establish the EventSource connection
-    const response = await fetch(`/api/encounters/${encounterId}/generate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ patient, transcript })
-    });
-
-    if (!response.body) return;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    // 2. Stream chunk reader loop
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value);
-      
-      // SSE formats chunks with data: prefices. Let's parse incoming payload blocks
-      const lines = chunk.split('\n');
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const parsed = JSON.parse(line.replace('data: ', ''));
-            // Progressively append data incoming fields
-            if (parsed.section === 'subjective') setSoapNote(prev => ({ ...prev, subjective: prev.subjective + parsed.text }));
-            if (parsed.section === 'objective') setSoapNote(prev => ({ ...prev, objective: prev.objective + parsed.text }));
-            if (parsed.section === 'assessment') setSoapNote(prev => ({ ...prev, assessment: prev.assessment + parsed.text }));
-            if (parsed.section === 'plan') setSoapNote(prev => ({ ...prev, plan: prev.plan + parsed.text }));
-          } catch (e) {
-            // End of stream marker handling
-          }
-        }
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to save encounter to the database.');
       }
-    }
-    setIsGenerating(false);
-  };
 
-  const appendIcd10Code = (item: { code: string; description: string }) => {
-    setSoapNote(prev => ({
-      ...prev,
-      assessment: prev.assessment + `\n- [ICD-10] ${item.code}: ${item.description}`
-    }));
+      // Success: Capture your relational transaction metrics
+      setSavedEncounterId(data.encounter_id);
+      alert(`Success! Saved Encounter ID: ${data.encounter_id} (Version: ${data.version})`);
+      
+    } catch (err) {
+      console.error('Save error:', err);
+      setErrorMessage(err.message || 'Network connectivity error.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-6 h-screen bg-slate-200">
-      {/* LEFT SIDE PANEL: Input and Clinical Metrics */}
-      <div className="flex flex-col space-y-4 overflow-y-auto pr-2">
-        <h2 className="text-lg font-bold text-slate-800 border-b pb-2">Encounter Inputs</h2>
-        <div className="grid grid-cols-3 gap-2">
-          <input type="text" placeholder="First Name" value={patient.firstName} onChange={e => setPatient({...patient, firstName: e.target.value})} className="border bg-white p-2 text-sm rounded focus:outline-none focus:border-blue-500"/>
-          <input type="text" placeholder="Last Name" value={patient.lastName} onChange={e => setPatient({...patient, lastName: e.target.value})} className="border p-2 bg-white text-sm rounded focus:outline-none focus:border-blue-500"/>
-          <input type="date" value={patient.dob} onChange={e => setPatient({...patient, dob: e.target.value})} className="border p-2 text-sm rounded bg-white focus:outline-none focus:border-blue-500"/>
+    <div className="p-6 max-w-4xl mx-auto bg-white shadow-md rounded-md mt-6">
+      <h2 className="text-xl font-bold mb-4 text-slate-800">New Clinical Encounter</h2>
+      
+      {errorMessage && (
+        <div className="p-3 mb-4 text-sm text-red-700 bg-red-100 rounded-md">
+          {errorMessage}
         </div>
-        
-        <textarea
-          value={transcript}
-          onChange={(e) => setTranscript(e.target.value)}
-          placeholder="Paste medical transcript or raw observational strings here..."
-          className="w-full bg-white h-44 border p-3 text-sm rounded font-sans focus:outline-none focus:border-blue-500"
-        />
+      )}
 
-        <button 
-          onClick={triggerSoapGeneration}
-          disabled={isGenerating}
-          className="bg-slate-800 hover:bg-slate-900 text-white font-medium py-2 rounded text-sm transition-all disabled:opacity-50"
-        >
-          {isGenerating ? 'Streaming Narrative Context...' : 'Generate Note'}
-        </button>
-
-        <Icd10SearchWidget onSelectCode={appendIcd10Code} />
-      </div>
-
-      {/* RIGHT SIDE PANEL: Live Progressive SOAP Modules */}
-      <div className="flex flex-col space-y-4 border border-slate-200 rounded-lg p-5 overflow-y-auto">
-        <h2 className="text-lg font-bold text-slate-800 border-b pb-2">Structured SOAP Record</h2>
-        
-        {['subjective', 'objective', 'assessment', 'plan'].map((section) => (
-          <div key={section} className="bg-white p-3 rounded border border-slate-800 shadow-sm">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 mb-1">{section}</h3>
-            <textarea
-              value={(soapNote as any)[section]}
-              onChange={(e) => setSoapNote(prev => ({ ...prev, [section]: e.target.value }))}
-              className="w-full text-sm text-slate-700 min-h-[80px] focus:outline-none resize-y"
-              placeholder={`Waiting for ${section} streaming sequence...`}
+      <form onSubmit={handleSaveEncounter} className="space-y-4">
+        {/* Patient Metadata Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700">First Name</label>
+            <input
+              type="text"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+              placeholder="John"
             />
           </div>
-        ))}
-      </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Last Name</label>
+            <input
+              type="text"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+              placeholder="Doe"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Date of Birth</label>
+            <input
+              type="date"
+              value={dob}
+              onChange={(e) => setDob(e.target.value)}
+              className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+        </div>
+
+        {/* Clinical Notes Workspace Section */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Encounter Transcript / Observations</label>
+          <textarea
+            rows={6}
+            value={transcript}
+            onChange={(e) => setTranscript(e.target.value)}
+            className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm font-sans focus:ring-blue-500 focus:border-blue-500"
+            placeholder="Patient presents with a 3-day history of scratchy throat, worsening dry cough..."
+          />
+        </div>
+
+        {/* Action Button Segment */}
+        <div className="flex justify-between items-center pt-2">
+          {savedEncounterId && (
+            <span className="text-xs text-green-600 font-medium">
+              Active Record: ID #{savedEncounterId}
+            </span>
+          )}
+          <button
+            type="submit"
+            disabled={isSaving}
+            className={`ml-auto px-4 py-2 text-white font-medium rounded-md shadow-sm ${
+              isSaving ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+            }`}
+          >
+            {isSaving ? 'Saving to Database...' : 'Save Initial Encounter'}
+          </button>
+        </div>
+      </form>
     </div>
   );
-};
+}
