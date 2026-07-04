@@ -1,26 +1,27 @@
 # backend/app/api/encounters.py
-import json
 import asyncio
+import json
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from openai import AsyncOpenAI
+
+from app.api.auth import get_current_provider
 from app.database import get_db
 from app.models import Encounter, EncounterVersion, Patient
-from app.api.auth import get_current_provider
 from app.schemas import EncounterGeneratePayload
 
 router = APIRouter(prefix="/api/encounters", tags=["Encounters"])
 
 # Ensure your local environment mounts OPENAI_API_KEY into the container environment variables
-aclient = AsyncOpenAI()
 
 @router.post("/{id}/generate")
 async def generate_soap_stream(
     id: int, 
     payload: EncounterGeneratePayload, 
     db: Session = Depends(get_db),
-    current_user: Provider = Depends(get_current_provider)
+    current_user = Depends(get_current_provider)
 ):
     # Enforce multi-tenant authorization parameters
     encounter = db.query(Encounter).filter(Encounter.id == id).first()
@@ -52,10 +53,30 @@ async def generate_soap_stream(
         "into a high-density, professional, clear SOAP note. You MUST include suggested semantic ICD-10 diagnosis "
         f"codes and plain descriptions matching the evaluation details.{history_context}"
     )
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    is_dummy_mode = api_key == "sk-test-dummy-key" or not api_key
 
     # Asynchronous Generator function to stream tokens safely through Server-Sent Events (SSE)
     async def sse_stream_generator():
+        if is_dummy_mode:
+            # 1. Provide a realistic medical-grade structural template text block
+            mock_note = (
+                "**SUBJECTIVE:** Patient presents reporting mild chronic back pain.\n"
+                "**OBJECTIVE:** Vitals normal. Lumbar spine flexion slightly restricted.\n"
+                "**ASSESSMENT:** Lumbar Radiculopathy (ICD-10: M54.16).\n"
+                "**PLAN:** Physical therapy 2x weekly for 6 weeks. Follow up as needed."
+            )
+            
+            # 2. Chop the text up into progressive micro-packets to mock streaming chunks
+            for chunk in mock_note.split(" "):
+                token = chunk + " "
+                # Format exactly to mirror standard Server-Sent Event (SSE) packaging
+                yield f"data: {json.dumps({'token': token})}\n\n"
+                await asyncio.sleep(0.08)  # Mimics actual LLM processing latency!
+            return
         try:
+            from openai import AsyncOpenAI
+            aclient = AsyncOpenAI()
             response_stream = await aclient.chat.completions.create(
                 model="gpt-4o",
                 messages=[

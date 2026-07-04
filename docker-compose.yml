@@ -28,6 +28,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:local_secure_password@postgres_db:5432/scribe_db
       # - OPENAI_API_KEY=${OPENAI_API_KEY} # Passed from your root local shell/.env file
+      - OPENAI_API_KEY="sk-test-dummy-key"
     ports:
       - "8000:8000"
     depends_on:
