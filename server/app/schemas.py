@@ -34,7 +34,8 @@ class PatientResponse(BaseModel):
 # --- Encounter Schemas ---
 class EncounterCreate(BaseModel):
     patient: PatientCreate
-    template_id: int
+    transcript: str = Field(..., example="Patient presents with mild cough and fatigue...")
+    template_id: Optional[int] = Field(None, example=1)
 
 class DraftSaveRequest(BaseModel):
     transcript_snapshot: str
