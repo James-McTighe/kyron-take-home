@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { EncounterWorkspace } from './components/EncounterWorkspace';
-import { LoginView } from './components/Login.tsx';
+import LoginView from './components/Login';
 
 
 // Main Routing Controller that watches the Auth Context

@@ -1,8 +1,7 @@
-
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { useState } from 'react';
 
-const LoginView = () => {
+export default function LoginView() {
   const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -91,4 +90,3 @@ const LoginView = () => {
   );
 };
 
-export default LoginView;
