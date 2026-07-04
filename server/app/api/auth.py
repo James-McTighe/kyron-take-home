@@ -1,73 +1,57 @@
-import os
-import datetime
+# backend/app/api/auth.py
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
+from app.database import get_db
+from app.models import Provider
+from app.schemas import LoginPayload
 
-from ..database import get_db
-from ..models import Provider
-from ..schemas import LoginRequest, TokenResponse, TokenData
-
-# Production architectures must load these from AWS Secrets Manager [cite: 178]
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super_secret_clinical_scribe_key_9912")
+# WARNING: Manage secrets securely via AWS Secrets Manager in production!
+SECRET_KEY = "SUPER_SECRET_CLINICAL_SCRIBE_KEY"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8-hour provider shifts
+ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
-def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] = None):
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
-    expire = datetime.datetime.utcnow() + (expires_delta or datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-@router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    # Query database for matching seeded record [cite: 118]
-    user = db.query(Provider).filter(Provider.email == payload.email).first()
+@router.post("/login")
+def login(payload: LoginPayload, db: Session = Depends(get_db)):
+    # Query against your auto-seeded database records
+    provider = db.query(Provider).filter(Provider.email == payload.email).first()
+    if not provider or provider.password_hash != payload.password:  # Replace with verification logic (e.g., bcrypt)
+        raise HTTPException(status_code=401, detail="Invalid email or password")
     
-    # Simple plain-text demonstration validation matching our startup seeds [cite: 12, 118]
-    if not user or user.password_hash != payload.password or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email, password, or deactivated account status."
-        )
-    
-    # Embed critical multi-role identity assertions into the token payload [cite: 117, 120]
-    token_data = {"sub": user.email, "role": user.role, "user_id": user.id}
-    access_token = create_access_token(data=token_data)
-    return {"access_token": access_token, "token_type": "bearer"}
+    if not provider.is_active:
+        raise HTTPException(status_code=403, detail="Account deactivated")
+        
+    token = create_access_token(data={"sub": provider.email, "role": provider.role, "id": provider.id})
+    return {"access_token": token, "token_type": "bearer", "role": provider.role}
 
-# --- Dependency Injections / Route Guards ---
-
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> TokenData:
+# Dependency Injector Guard to protect individual clinical paths
+def get_current_provider(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate active credentials.",
+        detail="Could not validate clinical session",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
-        role: str = payload.get("role")
-        user_id: int = payload.get("user_id")
-        if email is None or role is None or user_id is None:
+        if email is None:
             raise credentials_exception
-        return TokenData(email=email, role=role, user_id=user_id)
     except JWTError:
         raise credentials_exception
-
-def get_current_provider(current_user: TokenData = Depends(get_current_user)) -> TokenData:
-    """Blocks requests if the authenticated user doesn't possess operational clinical clearance."""
-    if current_user.role not in ["Provider", "Admin"]:
-        raise HTTPException(status_code=403, detail="Access denied. Provider role clearance required.")
-    return current_user
-
-def get_current_admin(current_user: TokenData = Depends(get_current_user)) -> TokenData:
-    """Blocks standard providers from accessing administrative layout routes[cite: 120]."""
-    if current_user.role != "Admin":
-        raise HTTPException(status_code=403, detail="Access denied. Administrative role clearance required.")
-    return current_user
+        
+    provider = db.query(Provider).filter(Provider.email == email).first()
+    if provider is None:
+        raise credentials_exception
+    return provider

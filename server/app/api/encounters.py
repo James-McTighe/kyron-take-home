@@ -1,153 +1,77 @@
+# backend/app/api/encounters.py
+import json
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from openai import AsyncOpenAI
 from app.database import get_db
-from app.models import Encounter, EncounterVersion
-from pydantic import BaseModel
-import re
+from app.models import Encounter, EncounterVersion, Patient
+from app.api.auth import get_current_provider
+from app.schemas import EncounterGeneratePayload
 
-router = APIRouter(prefix="/api/encounters", tags=["encounters"])
+router = APIRouter(prefix="/api/encounters", tags=["Encounters"])
 
-# Schema to validate the incoming finalized note payload
-class FinalizeNotePayload(BaseModel):
-    subjective: str
-    objective: str
-    assessment: str
-    plan: str
+# Ensure your local environment mounts OPENAI_API_KEY into the container environment variables
+aclient = AsyncOpenAI()
 
-
-class GenerateSOAPPayload(BaseModel):
-    transcript: str
-    template_id: int | None = None
-
-
-def _normalize_transcript(text: str) -> str:
-    return re.sub(r"\s+", " ", text.strip())
-
-
-def _infer_icd10(transcript: str) -> list[dict[str, str]]:
-    lowered = transcript.lower()
-    suggestions: list[dict[str, str]] = []
-
-    keyword_map = [
-        (("cough", "uri", "cold", "congestion", "sore throat"), ("J06.9", "Acute upper respiratory infection, unspecified")),
-        (("fever", "chills", "febrile"), ("R50.9", "Fever, unspecified")),
-        (("headache", "migraine"), ("R51.9", "Headache, unspecified")),
-        (("pain", "ache", "sprain"), ("R52", "Pain, unspecified")),
-        (("hypertension", "high blood pressure"), ("I10", "Essential (primary) hypertension")),
-        (("diabetes", "dm2", "hyperglycemia"), ("E11.9", "Type 2 diabetes mellitus without complications")),
-        (("anxiety", "panic"), ("F41.9", "Anxiety disorder, unspecified")),
-    ]
-
-    for keywords, (code, description) in keyword_map:
-        if any(keyword in lowered for keyword in keywords):
-            suggestions.append({"code": code, "description": description})
-
-    if not suggestions:
-        suggestions.append({"code": "R69", "description": "Illness, unspecified"})
-
-    return suggestions[:3]
-
-
-def _generate_soap(transcript: str) -> dict[str, object]:
-    normalized = _normalize_transcript(transcript)
-    lower = normalized.lower()
-    icd10_suggestions = _infer_icd10(normalized)
-
-    subjective_parts = []
-    objective_parts = []
-    assessment_parts = []
-    plan_parts = []
-
-    if normalized:
-        subjective_parts.append(f"Patient report reviewed from transcript: {normalized}")
-
-    if any(term in lower for term in ["cough", "throat", "congestion", "uri", "cold"]):
-        subjective_parts.append("Reports upper respiratory symptoms including cough and/or throat irritation.")
-        objective_parts.append("Appears consistent with a mild respiratory illness based on encounter description.")
-        assessment_parts.append("Presentation is most consistent with an uncomplicated upper respiratory process.")
-        plan_parts.append("Recommend supportive care, hydration, rest, and symptom monitoring.")
-
-    if any(term in lower for term in ["fever", "chills"]):
-        subjective_parts.append("Fever or systemic symptoms were mentioned in the encounter history.")
-        objective_parts.append("Monitor temperature trend and clinical status if symptoms persist or worsen.")
-
-    if any(term in lower for term in ["pain", "ache", "sprain", "injury"]):
-        subjective_parts.append("Pain or injury-related symptoms are present in the transcript.")
-        objective_parts.append("Documented pain pattern and functional impact should be clarified on exam.")
-        assessment_parts.append("Pain syndrome or localized injury remains part of the working differential.")
-        plan_parts.append("Consider conservative measures, reassessment, and escalation if symptoms worsen.")
-
-    if any(term in lower for term in ["hypertension", "blood pressure"]):
-        assessment_parts.append("Blood pressure-related follow-up may be warranted depending on observed readings.")
-        plan_parts.append("Encourage home monitoring and follow-up for elevated blood pressure if applicable.")
-
-    if not objective_parts:
-        objective_parts.append("Objective data were limited in the transcript and should be completed from exam/vitals.")
-    if not assessment_parts:
-        assessment_parts.append("Clinical impression remains limited by the source transcript and should be refined after review.")
-    if not plan_parts:
-        plan_parts.append("Finalize treatment plan after clinician review and confirmatory exam details.")
-
-    return {
-        "subjective": " ".join(subjective_parts).strip(),
-        "objective": " ".join(objective_parts).strip(),
-        "assessment": f"{' '.join(assessment_parts).strip()} Suggested ICD-10: {icd10_suggestions[0]['code']} - {icd10_suggestions[0]['description']}.",
-        "plan": " ".join(plan_parts).strip(),
-        "icd10_suggestions": icd10_suggestions,
-    }
-
-@router.post("/{encounter_id}/finalize", status_code=status.HTTP_201_CREATED)
-def finalize_encounter_version(
-    encounter_id: int, 
-    payload: FinalizeNotePayload, 
-    db: Session = Depends(get_db)
+@router.post("/{id}/generate")
+async def generate_soap_stream(
+    id: int, 
+    payload: EncounterGeneratePayload, 
+    db: Session = Depends(get_db),
+    current_user: Provider = Depends(get_current_provider)
 ):
-    # 1. Look up the parent encounter
-    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    # Enforce multi-tenant authorization parameters
+    encounter = db.query(Encounter).filter(Encounter.id == id).first()
     if not encounter:
-        raise HTTPException(status_code=404, detail="Encounter record not found.")
+        raise HTTPException(status_code=404, detail="Encounter record not found")
+    if encounter.provider_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Unauthorized access to encounter record")
 
-    # 2. Query the database to find the current max version number for this encounter
-    highest_version = db.query(EncounterVersion)\
-        .filter(EncounterVersion.encounter_id == encounter_id)\
-        .order_by(EncounterVersion.version_number.desc())\
-        .first()
-    
-    next_version_number = (highest_version.version_number + 1) if highest_version else 1
-
-    # 3. Pack the fields back into structured JSON for storage
-    soap_json = {
-        "subjective": payload.subjective,
-        "objective": payload.objective,
-        "assessment": payload.assessment,
-        "plan": payload.plan
-    }
-
-    # 4. Perform an append-only write (Never overwrite historical records)
-    new_version = EncounterVersion(
-        encounter_id=encounter_id,
-        version_number=next_version_number,
-        soap_note_json=soap_json,
-        saved_by_provider_id=encounter.provider_id  # Multi-tenant context binding
+    # Historical Context Lookup Rule: Programmatically extract past medical timeline data
+    patient = db.query(Patient).filter(Patient.id == encounter.patient_id).first()
+    past_versions = (
+        db.query(EncounterVersion)
+        .join(Encounter)
+        .filter(Encounter.patient_id == patient.id, Encounter.current_status == "Finalized")
+        .order_by(EncounterVersion.created_at.desc())
+        .limit(3)
+        .all()
     )
     
-    # 5. Flip encounter status flag to Finalized
-    encounter.current_status = "Finalized"
-    
-    db.add(new_version)
-    db.commit()
-    db.refresh(new_version)
+    # Structure background context hidden entirely from client payloads
+    history_context = ""
+    if past_versions:
+        history_context = "\n\n[PAST PATIENT MEDICAL HISTORY ENCOUNTERS]:\n"
+        for idx, ver in enumerate(past_versions):
+            history_context += f"Encounter History {idx+1}: {json.dumps(ver.soap_note_json)}\n"
 
-    return {
-        "message": "Clinical record locked successfully.",
-        "encounter_id": encounter_id,
-        "committed_version": new_version.version_number
-    }
+    system_prompt = (
+        "You are an elite, medical-grade AI Clinical Scribe. Transform the provided conversation transcript "
+        "into a high-density, professional, clear SOAP note. You MUST include suggested semantic ICD-10 diagnosis "
+        f"codes and plain descriptions matching the evaluation details.{history_context}"
+    )
 
+    # Asynchronous Generator function to stream tokens safely through Server-Sent Events (SSE)
+    async def sse_stream_generator():
+        try:
+            response_stream = await aclient.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Active Transcript Observation Data:\n{payload.transcript}"}
+                ],
+                stream=True
+            )
+            
+            async for chunk in response_stream:
+                token = chunk.choices[0].delta.content
+                if token:
+                    # Format as standard Server-Sent Event data packets
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+                    await asyncio.sleep(0.01)  # Micro-cooldown to allow pipeline flushing
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-@router.post("/generate-soap")
-def generate_soap_note(payload: GenerateSOAPPayload):
-    if not payload.transcript.strip():
-        raise HTTPException(status_code=400, detail="Transcript is required to generate a SOAP note.")
-
-    return _generate_soap(payload.transcript)
+    return StreamingResponse(sse_stream_generator(), media_type="text/event-stream")
