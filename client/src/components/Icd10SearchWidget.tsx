@@ -1,55 +1,73 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
-interface Icd10Code {
-  code: string;
-  description: string;
-}
-
-interface SearchProps {
-  onSelectCode: (code: Icd10Code) => void;
-}
-
-export const Icd10SearchWidget: React.FC<SearchProps> = ({ onSelectCode }) => {
+export default function Icd10SearchWidget({ onSelectCode }) {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Icd10Code[]>([]);
+  const [results, setResults] = useState([]);
+  const [isOpen, setIsOpen] = useState(false);
 
-  const handleSearch = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setQuery(val);
-    if (val.length < 3) return;
-
-    try {
-      const res = await fetch(`/api/icd10/search?q=${encodeURIComponent(val)}`);
-      const data = await res.json();
-      setResults(data.slice(0, 5)); // Limit to top 5 results
-    } catch (err) {
-      console.error("ICD-10 search error", err);
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      setResults([]);
+      return;
     }
-  };
+
+    const fetchCodes = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/encounters/icd10/search?q=${encodeURIComponent(query)}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setResults(data);
+          setIsOpen(data.length > 0);
+        }
+      } catch (err) {
+        console.error('ICD-10 fetch error:', err);
+      }
+    };
+
+    const handler = setTimeout(fetchCodes, 300);
+    return () => clearTimeout(handler);
+  }, [query]);
 
   return (
-    <div className="bg-slate-50 p-4 rounded-md border border-slate-200">
-      <h3 className="text-sm font-semibold text-slate-700 mb-2">Semantic ICD-10 Finder</h3>
+    <div className="relative">
+      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
+        Quick ICD-10 Diagnosis Code Search
+      </label>
       <input
         type="text"
+        className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+        placeholder="Type symptom or code (e.g. 'back pain', 'J06')..."
         value={query}
-        onChange={handleSearch}
-        placeholder="Type symptom or condition (e.g., hypertension)..."
-        className="w-full px-3 py-2 border text-sm border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-slate-500"
+        onChange={(e) => setQuery(e.target.value)}
+        onFocus={() => query.trim().length >= 2 && setIsOpen(true)}
+        onBlur={() => setTimeout(() => setIsOpen(false), 200)} // delay allows click to fire
       />
-      {results.length > 0 && (
-        <ul className="mt-2 bg-white border border-slate-200 rounded divide-y divide-slate-100 shadow-sm max-h-40 overflow-y-auto">
+
+      {isOpen && (
+        <ul className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
           {results.map((item) => (
-            <li 
+            <li
               key={item.code}
-              onClick={() => onSelectCode(item)}
-              className="p-2 text-xs hover:bg-slate-100 cursor-pointer text-slate-600 transition-colors"
+              onClick={() => {
+                onSelectCode(item);
+                setQuery('');
+                setResults([]);
+              }}
+              className="cursor-pointer px-4 py-2 text-sm hover:bg-slate-50 flex items-center justify-between"
             >
-              <strong className="text-slate-900 font-mono">{item.code}</strong> - {item.description}
+              <span className="font-semibold text-blue-900 bg-blue-50 px-2 py-0.5 rounded text-xs border border-blue-200">
+                {item.code}
+              </span>
+              <span className="text-slate-700 ml-3 text-xs truncate flex-1 text-right">
+                {item.description}
+              </span>
             </li>
           ))}
         </ul>
       )}
     </div>
   );
-};
+}

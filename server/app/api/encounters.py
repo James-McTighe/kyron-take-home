@@ -126,3 +126,35 @@ def save_encounter_draft(
     
     db.commit()
     return {"status": "success", "message": "Draft auto-saved successfully"}
+
+# High-frequency billing codes dictionary for immediate clinical lookup matching
+ICD10_DATABASE = [
+    {"code": "M54.50", "description": "Low back pain, unspecified"},
+    {"code": "J06.9", "description": "Acute upper respiratory infection, unspecified (Cold)"},
+    {"code": "J02.9", "description": "Acute pharyngitis, unspecified (Sore Throat)"},
+    {"code": "I10", "description": "Essential (primary) hypertension (High Blood Pressure)"},
+    {"code": "E11.9", "description": "Type 2 diabetes mellitus without complications"},
+    {"code": "F41.1", "description": "Generalized anxiety disorder"},
+    {"code": "F32.9", "description": "Major depressive disorder, single episode, unspecified"},
+    {"code": "K21.9", "description": "Gastro-esophageal reflux disease without esophagitis (GERD)"},
+    {"code": "M19.90", "description": "Osteoarthritis, unspecified site"},
+    {"code": "B34.9", "description": "Viral infection, unspecified"},
+]
+
+@router.get("/icd10/search")
+def search_icd10_codes(
+    q: str = "", 
+    current_user=Depends(get_current_provider)
+):
+    if not q or len(q.strip()) < 2:
+        return []
+        
+    search_query = q.lower().strip()
+    results = []
+    
+    for item in ICD10_DATABASE:
+        if search_query in item["code"].lower() or search_query in item["description"].lower():
+            results.append(item)
+            
+    # Limit results to top 5 matches for high-density UI rendering
+    return results[:5]

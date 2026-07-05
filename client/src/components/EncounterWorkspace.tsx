@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useDebounce } from '../hooks/useDebounce';
+import Icd10SearchWidget from './Icd10SearchWidget';
 
 type SoapSection = 'subjective' | 'objective' | 'assessment' | 'plan';
 
@@ -312,6 +313,18 @@ export default function EncounterWorkspace() {
                   placeholder="Patient presents with a 3-day history of scratchy throat, worsening dry cough..."
                 />
               </section>
+              <div className="mt-4 pt-2 border-t border-dashed border-slate-200">
+                <Icd10SearchWidget
+                  onSelectCode={(selected) => {
+                    // Automatically inject the formatting right into the active Assessment state variable
+                    setSoapDraft(current => ({
+                      ...current,
+                      assessment: current.assessment + (current.assessment ? "\n" : "") + `- ${selected.code}: ${selected.description}`
+                    }));
+                    setSuccessMessage(`Appended billing code ${selected.code} directly into your Assessment draft.`);
+                  }}
+                />
+              </div>
             </div>
 
             <div>
