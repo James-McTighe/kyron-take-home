@@ -101,3 +101,7 @@ class TemplateResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class EncounterDraftPayload(BaseModel):
+    # This captures the updated state of your S, O, A, P fields cleanly
+    soap_note_json: Dict[str, str]

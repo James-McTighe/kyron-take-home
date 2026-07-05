@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useDebounce } from '../hooks/useDebounce';
 
 type SoapSection = 'subjective' | 'objective' | 'assessment' | 'plan';
 
@@ -51,7 +52,74 @@ export default function EncounterWorkspace() {
       [field]: value,
     }));
   };
+  const handleBlurPatientField = async () => {
+    // Only trigger if we have a full name and DOB, and haven't created an ID yet
+    if (savedEncounterId || !firstName.trim() || !lastName.trim() || !dob) return;
 
+    try {
+      const payload = {
+        patient: {
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          dob,
+        },
+        transcript: transcript.trim(),
+        template_id: null,
+        soap_note_json: emptySoapDraft
+      };
+
+      const response = await fetch('/api/encounters', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+      if (response.ok && data.encounter_id) {
+        setSavedEncounterId(data.encounter_id);
+        setSuccessMessage(`Workspace connected. Active Record #${data.encounter_id}`);
+      }
+    } catch (err) {
+      console.error('Quiet initializing error:', err);
+    }
+  };
+  const debouncedSoapDraft = useDebounce(soapDraft, 2500);
+
+  useEffect(() => {
+    if (!savedEncounterId) return;
+
+    const autoSaveDraft = async () => {
+      try {
+        const token = localStorage.getItem('token');
+
+        const response = await fetch(`/api/encounters/${savedEncounterId}/draft`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            soap_note_json: {
+              subjective: debouncedSoapDraft.subjective.trim(),
+              objective: debouncedSoapDraft.objective.trim(),
+              assessment: debouncedSoapDraft.assessment.trim(),
+              plan: debouncedSoapDraft.plan.trim(),
+            }
+          }),
+        });
+
+        if (response.ok) {
+          console.log('Draft auto-saved successfully.');
+        } else {
+          console.error('Background auto-save failed with status:', response.status);
+        }
+      } catch (err) {
+        console.error('Auto-save network error:', err);
+      }
+    };
+
+    autoSaveDraft();
+  }, [debouncedSoapDraft, savedEncounterId]);
   const handleGenerateSoap = async () => {
     setIsGeneratingSoap(true);
     setErrorMessage('');
@@ -199,6 +267,7 @@ export default function EncounterWorkspace() {
                       type="text"
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
+                      onBlur={handleBlurPatientField}
                       className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                       placeholder="John"
                     />
@@ -209,6 +278,7 @@ export default function EncounterWorkspace() {
                       type="text"
                       value={lastName}
                       onChange={(e) => setLastName(e.target.value)}
+                      onBlur={handleBlurPatientField}
                       className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                       placeholder="Doe"
                     />
@@ -219,6 +289,7 @@ export default function EncounterWorkspace() {
                       type="date"
                       value={dob}
                       onChange={(e) => setDob(e.target.value)}
+                      onBlur={handleBlurPatientField}
                       className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                     />
                   </div>
@@ -285,8 +356,8 @@ export default function EncounterWorkspace() {
                     onClick={handleGenerateSoap}
                     disabled={isGeneratingSoap || isSaving}
                     className={`inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition ${isGeneratingSoap || isSaving
-                        ? 'cursor-not-allowed border border-slate-300 bg-slate-100 text-slate-400'
-                        : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                      ? 'cursor-not-allowed border border-slate-300 bg-slate-100 text-slate-400'
+                      : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
                       }`}
                   >
                     {isGeneratingSoap ? 'Generating SOAP...' : 'Generate SOAP from Transcript'}
