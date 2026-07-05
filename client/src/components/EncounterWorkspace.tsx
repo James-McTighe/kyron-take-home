@@ -34,13 +34,53 @@ const emptySoapDraft = {
   plan: '',
 };
 
+function parseSoapSections(rawText: string) {
+  const normalizedText = rawText.replace(/\r\n/g, '\n');
+  const sections = {
+    subjective: '',
+    objective: '',
+    assessment: '',
+    plan: '',
+  };
+
+  const sectionPattern = /(?:^|\n)\s*(?:#{1,6}\s*)?(subjective|objective|assessment|plan)\s*:\s*/gi;
+  const matches = Array.from(normalizedText.matchAll(sectionPattern));
+
+  if (matches.length === 0) {
+    sections.subjective = normalizedText;
+    return sections;
+  }
+
+  let activeSection: SoapSection | null = null;
+  let cursor = 0;
+
+  for (const match of matches) {
+    const matchIndex = match.index ?? 0;
+
+    if (activeSection) {
+      sections[activeSection] += normalizedText.slice(cursor, matchIndex);
+    } else if (matchIndex > 0) {
+      sections.subjective += normalizedText.slice(0, matchIndex);
+    }
+
+    activeSection = match[1].toLowerCase() as SoapSection;
+    cursor = matchIndex + match[0].length;
+  }
+
+  if (activeSection) {
+    sections[activeSection] += normalizedText.slice(cursor);
+  }
+
+  return sections;
+}
+
 export default function EncounterWorkspace() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [dob, setDob] = useState('');
   const [transcript, setTranscript] = useState('');
   const [soapDraft, setSoapDraft] = useState(emptySoapDraft);
-
+  const [isStreamingActive, setIsStreamingActive] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isGeneratingSoap, setIsGeneratingSoap] = useState(false);
   const [savedEncounterId, setSavedEncounterId] = useState<number | null>(null);
@@ -58,6 +98,7 @@ export default function EncounterWorkspace() {
     if (savedEncounterId || !firstName.trim() || !lastName.trim() || !dob) return;
 
     try {
+      const token = localStorage.getItem('token');
       const payload = {
         patient: {
           first_name: firstName.trim(),
@@ -71,7 +112,10 @@ export default function EncounterWorkspace() {
 
       const response = await fetch('/api/encounters', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify(payload),
       });
 
@@ -87,12 +131,12 @@ export default function EncounterWorkspace() {
   const debouncedSoapDraft = useDebounce(soapDraft, 2500);
 
   useEffect(() => {
-    if (!savedEncounterId) return;
+    // Abort if there is no active record or if the AI streamer currently owns the state variables
+    if (!savedEncounterId || isStreamingActive) return;
 
     const autoSaveDraft = async () => {
       try {
         const token = localStorage.getItem('token');
-
         const response = await fetch(`/api/encounters/${savedEncounterId}/draft`, {
           method: 'PUT',
           headers: {
@@ -111,8 +155,6 @@ export default function EncounterWorkspace() {
 
         if (response.ok) {
           console.log('Draft auto-saved successfully.');
-        } else {
-          console.error('Background auto-save failed with status:', response.status);
         }
       } catch (err) {
         console.error('Auto-save network error:', err);
@@ -120,23 +162,35 @@ export default function EncounterWorkspace() {
     };
 
     autoSaveDraft();
-  }, [debouncedSoapDraft, savedEncounterId]);
+  }, [debouncedSoapDraft, savedEncounterId, isStreamingActive]);
+
   const handleGenerateSoap = async () => {
     setIsGeneratingSoap(true);
+    setIsStreamingActive(true); // Lock out background debounced auto-saves
     setErrorMessage('');
     setSuccessMessage('');
+
+    if (!savedEncounterId) {
+      setErrorMessage('Save or connect the encounter first so the generated SOAP can be attached to a record.');
+      setIsGeneratingSoap(false);
+      setIsStreamingActive(false);
+      return;
+    }
 
     if (!transcript.trim()) {
       setErrorMessage('Enter a transcript or clinical observation before generating SOAP fields.');
       setIsGeneratingSoap(false);
+      setIsStreamingActive(false);
       return;
     }
 
     try {
-      const response = await fetch('/api/encounters/generate-soap', {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`/api/encounters/${savedEncounterId}/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           transcript: transcript.trim(),
@@ -144,24 +198,80 @@ export default function EncounterWorkspace() {
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.detail || 'Failed to generate SOAP note.');
+        const data = await response.json();
+        throw new Error(data.detail || 'Failed to trigger AI generation stream.');
       }
 
-      setSoapDraft({
-        subjective: data.subjective ?? '',
-        objective: data.objective ?? '',
-        assessment: data.assessment ?? '',
-        plan: data.plan ?? '',
+      const reader = response.body ? response.body.getReader() : null;
+      const decoder = new TextDecoder('utf-8');
+
+      if (!reader) {
+        throw new Error('Streaming data transport channel failed to initialize.');
+      }
+
+      let streamedText = '';
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Parse complete individual SSE frames out of the stream buffer
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary !== -1) {
+          const frame = buffer.slice(0, boundary).trim();
+          buffer = buffer.slice(boundary + 2);
+          
+          if (frame.startsWith('data: ')) {
+            try {
+              const rawJson = frame.slice(6).trim();
+              if (rawJson) {
+                const parsed = JSON.parse(rawJson);
+                if (parsed.error) throw new Error(parsed.error);
+
+                const tokenText = parsed.token;
+                if (tokenText) {
+                  streamedText += tokenText;
+                  const parsedSoap = parseSoapSections(streamedText);
+
+                  setSoapDraft({
+                    subjective: parsedSoap.subjective.trimStart(),
+                    objective: parsedSoap.objective.trimStart(),
+                    assessment: parsedSoap.assessment.trimStart(),
+                    plan: parsedSoap.plan.trimStart(),
+                  });
+                }
+              }
+            } catch (e) {
+              console.warn("Parse drop:", e);
+            }
+          }
+          boundary = buffer.indexOf('\n\n');
+        }
+      }
+
+      // Final persistence synchronization to ensure the full note is saved to the database
+      const finalSoapDraft = parseSoapSections(streamedText);
+      const finalToken = localStorage.getItem('token');
+      await fetch(`/api/encounters/${savedEncounterId}/draft`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${finalToken}`
+        },
+        body: JSON.stringify({ soap_note_json: finalSoapDraft }),
       });
-      setSuccessMessage('SOAP draft generated from transcript. Review and edit as needed.');
+
+      setSuccessMessage('AI SOAP fields populated successfully. Review and edit as needed.');
     } catch (err) {
-      console.error('SOAP generation error:', err);
-      setErrorMessage(err instanceof Error ? err.message : 'Unable to generate SOAP note.');
+      console.error('AI Stream mapping failure:', err);
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to complete stream generation pipeline.');
     } finally {
       setIsGeneratingSoap(false);
+      setIsStreamingActive(false); // Enable standard manual typing auto-save behavior
     }
   };
 
@@ -178,6 +288,7 @@ export default function EncounterWorkspace() {
     }
 
     try {
+      const token = localStorage.getItem('token');
       const payload = {
         patient: {
           first_name: firstName.trim(),
@@ -198,6 +309,7 @@ export default function EncounterWorkspace() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify(payload),
       });

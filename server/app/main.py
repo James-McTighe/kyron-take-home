@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app import database, models, schemas  # Ensure correct directory imports
 
 from .api import auth, encounters  # <-- Import your new API modules
+from .api.auth import get_current_provider
 from .database import Base, engine, get_db
 from .models import Provider, Template
 
@@ -80,7 +81,8 @@ def health_check(db: Session = Depends(get_db)):
 @app.post("/api/encounters", status_code=status.HTTP_201_CREATED)
 def create_initial_encounter(
     payload: schemas.EncounterCreate, 
-    db: Session = Depends(database.get_db)  # Uses your active connection pool
+    db: Session = Depends(database.get_db),  # Uses your active connection pool
+    current_user: Provider = Depends(get_current_provider),
 ):
     try:
         # 1. Check if patient already exists or create them dynamically
@@ -99,16 +101,10 @@ def create_initial_encounter(
             db.add(patient)
             db.flush()  # Generates patient.id without committing yet
 
-        # 2. Hardcode a testing provider ID for Day 1 local verification
-        # (Tomorrow we swap this out for your authenticated JWT get_current_user guard!)
-        fallback_provider = db.query(models.Provider).first()
-        if not fallback_provider:
-            raise HTTPException(status_code=500, detail="No seeded providers found.")
-
-        # 3. Initialize the core Encounter record shell
+        # 2. Initialize the core Encounter record shell under the current provider
         encounter = models.Encounter(
             patient_id=patient.id,
-            provider_id=fallback_provider.id,
+            provider_id=current_user.id,
             current_status="Draft"
         )
         db.add(encounter)
@@ -121,7 +117,7 @@ def create_initial_encounter(
             version_number=1,
             transcript_snapshot=payload.transcript,
             soap_note_json=payload.soap_note_json or {},  # Preserve generated SOAP draft when available
-            saved_by_provider_id=fallback_provider.id
+            saved_by_provider_id=current_user.id
         )
         db.add(initial_version)
         
