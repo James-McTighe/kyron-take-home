@@ -27,7 +27,7 @@ services:
       - ./server:/app
     environment:
       - DATABASE_URL=postgresql://postgres:local_secure_password@postgres_db:5432/scribe_db
-      # - OPENAI_API_KEY=${OPENAI_API_KEY} # Passed from your root local shell/.env file
+      # - OPENAI_API_KEY=${OPENAI_API_KEY} 
       - OPENAI_API_KEY="sk-test-dummy-key"
     ports:
       - "8000:8000"
@@ -47,11 +47,11 @@ services:
     ports:
       - "5173:5173"
     environment:
-      - CHOKIDAR_USEPOLLING=true # Ensures Vite Hot Module Replacement works smoothly inside Docker
+      - CHOKIDAR_USEPOLLING=true
     depends_on:
       - server
 
-  # 4. Reverse Proxy Layer (Nginx - Preparing for your AWS architecture)
+  # 4. Reverse Proxy Layer
   nginx_proxy:
     image: nginx:alpine
     container_name: scribe_nginx_container
